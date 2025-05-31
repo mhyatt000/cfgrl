@@ -2,7 +2,7 @@
 
 **Kevin Frans**, **Seohong Park**, Pieter Abbeel, Sergey Levine
 
-ArXiv: (Coming Soon)
+ArXiv: https://arxiv.org/abs/2505.23458
 
 At the core of reinforcement learning is the idea of learning beyond the performance in the data. However, scaling such systems has proven notoriously tricky. In contrast, techniques from generative modeling have proven remarkably scalable and are simple to train. 
 In this work, we combine these strengths, by deriving a direct relation between policy improvement and guidance of diffusion models. The resulting framework, CFGRL, is trained with the simplicity of supervised learning, yet can further improve on the policies in the data.
