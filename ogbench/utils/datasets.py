@@ -241,12 +241,15 @@ class GCDataset:
             self.config['actor_geom_sample'],
         )
 
+        actor_offsets = actor_goal_idxs - idxs
+
         if 'oracle_reps' in self.dataset:
             batch['value_goals'] = self.dataset['oracle_reps'][value_goal_idxs]
             batch['actor_goals'] = self.dataset['oracle_reps'][actor_goal_idxs]
         else:
             batch['value_goals'] = self.get_observations(value_goal_idxs)
             batch['actor_goals'] = self.get_observations(actor_goal_idxs)
+        batch['actor_offsets'] = actor_offsets[:, None]
         successes = (idxs == value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes
         batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)

@@ -536,7 +536,7 @@ class GCActorVectorField(nn.Module):
         self.mlp = MLP((*self.hidden_dims, self.action_dim), activate_final=False, layer_norm=self.layer_norm)
 
     @nn.compact
-    def __call__(self, observations, actions, times, goals=None, is_encoded=False):
+    def __call__(self, observations, actions, times, goals=None, goal_steps=None, is_encoded=False):
         """Return the vectors at the given states, actions, and times, and goals (optional).
 
         Args:
@@ -548,10 +548,13 @@ class GCActorVectorField(nn.Module):
         """
         if self.encoder is not None and not is_encoded:
             observations = self.encoder(observations)
-        if goals is None:
-            inputs = jnp.concatenate([observations, actions, times], axis=-1)
-        else:
-            inputs = jnp.concatenate([observations, goals, actions, times], axis=-1)
+        inputs = [observations]
+        if goals is not None:
+            inputs.append(goals)
+        inputs.extend([actions, times])
+        if goal_steps is not None:
+            inputs.append(goal_steps)
+        inputs = jnp.concatenate(inputs, axis=-1)
         v = self.mlp(inputs)
         return v
 

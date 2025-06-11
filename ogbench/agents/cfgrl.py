@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Any
 
 import flax
@@ -22,7 +21,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
     def actor_loss(self, batch, grad_params, rng=None):
         """Compute the behavioral flow-matching actor loss."""
         batch_size, action_dim = batch['actions'].shape
-        rng, x_rng, t_rng, cfg_rng = jax.random.split(rng, 4)
+        rng, x_rng, t_rng = jax.random.split(rng, 3)
 
         x_0 = jax.random.normal(x_rng, (batch_size, action_dim))
         x_1 = batch['actions']
@@ -31,10 +30,35 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         vel = x_1 - x_0
 
         unc_embed = self.network.select('unc_embed')(params=grad_params)  # (1, goal_dim)
-        do_cfg = jax.random.bernoulli(cfg_rng, p=0.1, shape=(batch_size,))
-        goals = jnp.where(do_cfg[:, None], unc_embed, batch['actor_goals'])
 
-        pred = self.network.select('actor_flow')(batch['observations'], x_t, t, goals=goals, params=grad_params)
+        unc_pred = self.network.select('actor_flow')(
+            batch['observations'],
+            x_t,
+            t,
+            goals=unc_embed,
+            params=grad_params,
+        )
+        g_pred = self.network.select('actor_flow')(
+            batch['observations'],
+            x_t,
+            t,
+            goals=batch['actor_goals'],
+            params=grad_params,
+        )
+        gt_pred = self.network.select('actor_flow')(
+            batch['observations'],
+            x_t,
+            t,
+            goals=batch['actor_goals'],
+            goal_steps=batch['actor_offsets'],
+            params=grad_params,
+        )
+
+        pred = (
+            unc_pred
+            + self.config['cfg'] * (g_pred - unc_pred)
+            + self.config.get('cfg2', 1.0) * (gt_pred - g_pred)
+        )
         actor_loss = jnp.mean((pred - vel) ** 2)
 
         return actor_loss, {
@@ -72,6 +96,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         self,
         observations,
         goals=None,
+        goal_steps=None,
         seed=None,
         temperature=1.0,
     ):
@@ -89,9 +114,33 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         for i in range(self.config['flow_steps']):
             t = jnp.full((*observations.shape[:-1], 1), i / self.config['flow_steps'])
 
-            unc_vels = self.network.select('actor_flow')(observations, actions, t, goals=unc_embed, is_encoded=True)
-            cond_vels = self.network.select('actor_flow')(observations, actions, t, goals=goals, is_encoded=True)
-            vels = unc_vels + self.config['cfg'] * (cond_vels - unc_vels)
+            unc_vels = self.network.select('actor_flow')(
+                observations,
+                actions,
+                t,
+                goals=unc_embed,
+                is_encoded=True,
+            )
+            g_vels = self.network.select('actor_flow')(
+                observations,
+                actions,
+                t,
+                goals=goals,
+                is_encoded=True,
+            )
+            gt_vels = self.network.select('actor_flow')(
+                observations,
+                actions,
+                t,
+                goals=goals,
+                goal_steps=goal_steps,
+                is_encoded=True,
+            )
+            vels = (
+                unc_vels
+                + self.config['cfg'] * (g_vels - unc_vels)
+                + self.config.get('cfg2', 1.0) * (gt_vels - g_vels)
+            )
 
             actions = actions + vels / self.config['flow_steps']
 
@@ -120,6 +169,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         ex_actions = example_batch['actions']
         ex_goals = example_batch['value_goals']
         ex_times = ex_actions[..., :1]
+        ex_offsets = example_batch['actor_offsets']
         action_dim = ex_actions.shape[-1]
 
         # Define encoders.
@@ -141,7 +191,10 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         )
 
         network_info = dict(
-            actor_flow=(actor_flow_def, (ex_observations, ex_actions, ex_times, ex_goals)),
+            actor_flow=(
+                actor_flow_def,
+                (ex_observations, ex_actions, ex_times, ex_goals, ex_offsets),
+            ),
             unc_embed=(unc_embed_def, ()),
         )
         if encoders.get('actor_flow') is not None:
@@ -171,6 +224,7 @@ def get_config():
             discount=0.99,  # Discount factor.
             flow_steps=16,  # Number of flow steps.
             cfg=3.0,  # CFG coefficient.
+            cfg2=3.0,  # CFG coefficient for time conditioning.
             encoder=ml_collections.config_dict.placeholder(str),  # Visual encoder name (None, 'impala_small', etc.).
             action_dim=ml_collections.config_dict.placeholder(int),  # Action dimension (will be set automatically).
             # Dataset hyperparameters.
