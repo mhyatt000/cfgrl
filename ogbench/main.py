@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import jax
 import numpy as np
+from rich.pretty import pprint
 import tqdm
 import wandb
 from absl import app, flags
@@ -17,6 +18,7 @@ from utils.env_utils import make_gc_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
 from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, get_wandb_video, setup_wandb
+from utils.time_utils import spec
 
 FLAGS = flags.FLAGS
 
@@ -41,6 +43,7 @@ flags.DEFINE_integer('video_frame_skip', 3, 'Frame skip for videos.')
 flags.DEFINE_integer('eval_on_cpu', 0, 'Whether to evaluate on CPU.')
 
 config_flags.DEFINE_config_file('agent', 'agents/cfgrl.py', lock_config=False)
+
 
 
 def main(_):
@@ -71,6 +74,7 @@ def main(_):
     np.random.seed(FLAGS.seed)
 
     example_batch = train_dataset.sample(1)
+    pprint(spec(example_batch))
 
     agent_class = agents[config['agent_name']]
     agent = agent_class.create(
@@ -78,6 +82,7 @@ def main(_):
         example_batch,
         config,
     )
+    pprint(f'Agent: {agent_class.__name__}')
 
     # Restore agent.
     if FLAGS.restore_path is not None:

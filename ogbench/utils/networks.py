@@ -9,15 +9,15 @@ import jax.numpy as jnp
 
 def default_init(scale=1.0):
     """Default kernel initializer."""
-    return nn.initializers.variance_scaling(scale, 'fan_avg', 'uniform')
+    return nn.initializers.variance_scaling(scale, "fan_avg", "uniform")
 
 
 def ensemblize(cls, num_qs, out_axes=0, **kwargs):
     """Ensemblize a module."""
     return nn.vmap(
         cls,
-        variable_axes={'params': 0},
-        split_rngs={'params': True},
+        variable_axes={"params": 0},
+        split_rngs={"params": True},
         in_axes=None,
         out_axes=out_axes,
         axis_size=num_qs,
@@ -78,7 +78,7 @@ class Param(nn.Module):
 
     @nn.compact
     def __call__(self):
-        return self.param('value', init_fn=lambda key: jnp.full((), self.init_value))
+        return self.param("value", init_fn=lambda key: jnp.full((), self.init_value))
 
 
 class LogParam(nn.Module):
@@ -88,7 +88,9 @@ class LogParam(nn.Module):
 
     @nn.compact
     def __call__(self):
-        log_value = self.param('log_value', init_fn=lambda key: jnp.full((), jnp.log(self.init_value)))
+        log_value = self.param(
+            "log_value", init_fn=lambda key: jnp.full((), jnp.log(self.init_value))
+        )
         return jnp.exp(log_value)
 
 
@@ -167,12 +169,18 @@ class GCActor(nn.Module):
 
     def setup(self):
         self.actor_net = MLP(self.hidden_dims, activate_final=True)
-        self.mean_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+        self.mean_net = nn.Dense(
+            self.action_dim, kernel_init=default_init(self.final_fc_init_scale)
+        )
         if self.state_dependent_std:
-            self.log_std_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+            self.log_std_net = nn.Dense(
+                self.action_dim, kernel_init=default_init(self.final_fc_init_scale)
+            )
         else:
             if not self.const_std:
-                self.log_stds = self.param('log_stds', nn.initializers.zeros, (self.action_dim,))
+                self.log_stds = self.param(
+                    "log_stds", nn.initializers.zeros, (self.action_dim,)
+                )
 
     def __call__(
         self,
@@ -209,9 +217,13 @@ class GCActor(nn.Module):
 
         log_stds = jnp.clip(log_stds, self.log_std_min, self.log_std_max)
 
-        distribution = distrax.MultivariateNormalDiag(loc=means, scale_diag=jnp.exp(log_stds) * temperature)
+        distribution = distrax.MultivariateNormalDiag(
+            loc=means, scale_diag=jnp.exp(log_stds) * temperature
+        )
         if self.tanh_squash:
-            distribution = TransformedWithMode(distribution, distrax.Block(distrax.Tanh(), ndims=1))
+            distribution = TransformedWithMode(
+                distribution, distrax.Block(distrax.Tanh(), ndims=1)
+            )
 
         return distribution
 
@@ -233,7 +245,9 @@ class GCDiscreteActor(nn.Module):
 
     def setup(self):
         self.actor_net = MLP(self.hidden_dims, activate_final=True)
-        self.logit_net = nn.Dense(self.action_dim, kernel_init=default_init(self.final_fc_init_scale))
+        self.logit_net = nn.Dense(
+            self.action_dim, kernel_init=default_init(self.final_fc_init_scale)
+        )
 
     def __call__(
         self,
@@ -261,7 +275,9 @@ class GCDiscreteActor(nn.Module):
 
         logits = self.logit_net(outputs)
 
-        distribution = distrax.Categorical(logits=logits / jnp.maximum(1e-6, temperature))
+        distribution = distrax.Categorical(
+            logits=logits / jnp.maximum(1e-6, temperature)
+        )
 
         return distribution
 
@@ -287,7 +303,9 @@ class GCValue(nn.Module):
         mlp_module = MLP
         if self.ensemble:
             mlp_module = ensemblize(mlp_module, 2)
-        value_net = mlp_module((*self.hidden_dims, 1), activate_final=False, layer_norm=self.layer_norm)
+        value_net = mlp_module(
+            (*self.hidden_dims, 1), activate_final=False, layer_norm=self.layer_norm
+        )
 
         self.value_net = value_net
 
@@ -353,8 +371,16 @@ class GCBilinearValue(nn.Module):
         if self.ensemble:
             mlp_module = ensemblize(mlp_module, 2)
 
-        self.phi = mlp_module((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
-        self.psi = mlp_module((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+        self.phi = mlp_module(
+            (*self.hidden_dims, self.latent_dim),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
+        self.psi = mlp_module(
+            (*self.hidden_dims, self.latent_dim),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
 
     def __call__(self, observations, goals, actions=None, info=False):
         """Return the value/critic function.
@@ -418,7 +444,11 @@ class GCMRNValue(nn.Module):
     encoder: nn.Module = None
 
     def setup(self):
-        self.phi = MLP((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+        self.phi = MLP(
+            (*self.hidden_dims, self.latent_dim),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
 
     def __call__(self, observations, goals, is_phi=False, info=False):
         """Return the MRN value function.
@@ -473,7 +503,11 @@ class GCIQEValue(nn.Module):
     encoder: nn.Module = None
 
     def setup(self):
-        self.phi = MLP((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+        self.phi = MLP(
+            (*self.hidden_dims, self.latent_dim),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
         self.alpha = Param()
 
     def __call__(self, observations, goals, is_phi=False, info=False):
@@ -502,12 +536,14 @@ class GCIQEValue(nn.Module):
         xy = jnp.concatenate(jnp.broadcast_arrays(x, y), axis=-1)
         ixy = xy.argsort(axis=-1)
         sxy = jnp.take_along_axis(xy, ixy, axis=-1)
-        neg_inc_copies = jnp.take_along_axis(valid, ixy % self.dim_per_component, axis=-1) * jnp.where(
-            ixy < self.dim_per_component, -1, 1
-        )
+        neg_inc_copies = jnp.take_along_axis(
+            valid, ixy % self.dim_per_component, axis=-1
+        ) * jnp.where(ixy < self.dim_per_component, -1, 1)
         neg_inp_copies = jnp.cumsum(neg_inc_copies, axis=-1)
         neg_f = -1.0 * (neg_inp_copies < 0)
-        neg_incf = jnp.concatenate([neg_f[..., :1], neg_f[..., 1:] - neg_f[..., :-1]], axis=-1)
+        neg_incf = jnp.concatenate(
+            [neg_f[..., :1], neg_f[..., 1:] - neg_f[..., :-1]], axis=-1
+        )
         components = (sxy * neg_incf).sum(axis=-1)
         v = alpha * components.mean(axis=-1) + (1 - alpha) * components.max(axis=-1)
 
@@ -533,10 +569,22 @@ class GCActorVectorField(nn.Module):
     encoder: nn.Module = None
 
     def setup(self) -> None:
-        self.mlp = MLP((*self.hidden_dims, self.action_dim), activate_final=False, layer_norm=self.layer_norm)
+        self.mlp = MLP(
+            (*self.hidden_dims, self.action_dim),
+            activate_final=False,
+            layer_norm=self.layer_norm,
+        )
 
     @nn.compact
-    def __call__(self, observations, actions, times, goals=None, goal_steps=None, is_encoded=False):
+    def __call__(
+        self,
+        observations,
+        actions,
+        times,
+        goals=None,
+        goal_steps=None,
+        is_encoded=False,
+    ):
         """Return the vectors at the given states, actions, and times, and goals (optional).
 
         Args:
@@ -546,15 +594,13 @@ class GCActorVectorField(nn.Module):
             goals: Goals (optional).
             is_encoded: Whether the observations are already encoded.
         """
+
         if self.encoder is not None and not is_encoded:
             observations = self.encoder(observations)
-        inputs = [observations]
-        if goals is not None:
-            inputs.append(goals)
-        inputs.extend([actions, times])
-        if goal_steps is not None:
-            inputs.append(goal_steps)
-        inputs = jnp.concatenate(inputs, axis=-1)
+
+        inputs = [observations, actions, times, goals, goal_steps]
+        inputs = jnp.concatenate([x for x in inputs if x is not None], axis=-1)
+
         v = self.mlp(inputs)
         return v
 
@@ -563,8 +609,9 @@ class UnconditionalEmbedding(nn.Module):
     """Unconditional embedding module."""
 
     goal_dim: int
+    num_embeddings: int = 1
 
     @nn.compact
-    def __call__(self):
-        embed = nn.Embed(1, self.goal_dim)
-        return embed(jnp.zeros(1, dtype=jnp.uint8))
+    def __call__(self, x: jnp.ndarray = jnp.zeros(1, dtype=jnp.uint8)):
+        embed = nn.Embed(self.num_embeddings, self.goal_dim)
+        return embed(x)

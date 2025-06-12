@@ -241,7 +241,7 @@ class GCDataset:
             self.config['actor_geom_sample'],
         )
 
-        actor_offsets = actor_goal_idxs - idxs
+        actor_offsets = jnp.array(actor_goal_idxs - idxs, dtype=jnp.uint8)
 
         if 'oracle_reps' in self.dataset:
             batch['value_goals'] = self.dataset['oracle_reps'][value_goal_idxs]

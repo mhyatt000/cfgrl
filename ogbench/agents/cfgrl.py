@@ -1,4 +1,5 @@
 from typing import Any
+from rich.pretty import pprint
 
 import flax
 import jax
@@ -21,7 +22,8 @@ class CFGRLAgent(flax.struct.PyTreeNode):
     def actor_loss(self, batch, grad_params, rng=None):
         """Compute the behavioral flow-matching actor loss."""
         batch_size, action_dim = batch['actions'].shape
-        rng, x_rng, t_rng = jax.random.split(rng, 3)
+        # rng for each input to maybe condition cfg
+        rng, x_rng, t_rng, gcfg_rng, scfg_rng = jax.random.split(rng, 5)
 
         x_0 = jax.random.normal(x_rng, (batch_size, action_dim))
         x_1 = batch['actions']
@@ -30,34 +32,22 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         vel = x_1 - x_0
 
         unc_embed = self.network.select('unc_embed')(params=grad_params)  # (1, goal_dim)
+        do_gcfg = jax.random.bernoulli(gcfg_rng, p=0.1, shape=(batch_size,))
+        goals = jnp.where(do_gcfg[:, None], unc_embed, batch['actor_goals'])
 
-        unc_pred = self.network.select('actor_flow')(
-            batch['observations'],
-            x_t,
-            t,
-            goals=unc_embed,
-            params=grad_params,
-        )
-        g_pred = self.network.select('actor_flow')(
-            batch['observations'],
-            x_t,
-            t,
-            goals=batch['actor_goals'],
-            params=grad_params,
-        )
-        gt_pred = self.network.select('actor_flow')(
-            batch['observations'],
-            x_t,
-            t,
-            goals=batch['actor_goals'],
-            goal_steps=batch['actor_offsets'],
-            params=grad_params,
-        )
+        unc_step_embed = self.network.select('unc_step_embed')(params=grad_params)  # (1, 4)
+        step_embed = self.network.select('unc_step_embed')(batch['actor_offsets'], params=grad_params)  
+        do_scfg = jax.random.bernoulli(scfg_rng, p=0.5, shape=(batch_size,))
+        mask = jnp.logical_and(do_scfg, do_gcfg)
+        steps = jnp.where(mask[:,None], unc_step_embed, step_embed[:,0])
 
-        pred = (
-            unc_pred
-            + self.config['cfg'] * (g_pred - unc_pred)
-            + self.config.get('cfg2', 1.0) * (gt_pred - g_pred)
+        pred = self.network.select('actor_flow')(
+                batch['observations'], 
+                x_t, 
+                t, 
+                goals=goals, 
+                goal_steps=steps, 
+                params=grad_params
         )
         actor_loss = jnp.mean((pred - vel) ** 2)
 
@@ -111,6 +101,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         )
 
         unc_embed = self.network.select('unc_embed')()[0]
+        unc_step_embed = self.network.select('unc_step_embed')()[0]
         for i in range(self.config['flow_steps']):
             t = jnp.full((*observations.shape[:-1], 1), i / self.config['flow_steps'])
 
@@ -119,6 +110,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
                 actions,
                 t,
                 goals=unc_embed,
+                goal_steps=unc_step_embed,
                 is_encoded=True,
             )
             g_vels = self.network.select('actor_flow')(
@@ -126,14 +118,17 @@ class CFGRLAgent(flax.struct.PyTreeNode):
                 actions,
                 t,
                 goals=goals,
+                goal_steps=unc_step_embed,
                 is_encoded=True,
             )
+
+            steps = self.network.select('unc_step_embed')( goal_steps)[0] if goal_steps is not None else unc_step_embed
             gt_vels = self.network.select('actor_flow')(
                 observations,
                 actions,
                 t,
                 goals=goals,
-                goal_steps=goal_steps,
+                goal_steps= steps,
                 is_encoded=True,
             )
             vels = (
@@ -190,12 +185,18 @@ class CFGRLAgent(flax.struct.PyTreeNode):
             goal_dim=ex_goals.shape[-1],
         )
 
+        step_dim=4
+        unc_step_embed_def = UnconditionalEmbedding( num_embeddings=1000, goal_dim=step_dim)
+
         network_info = dict(
             actor_flow=(
                 actor_flow_def,
-                (ex_observations, ex_actions, ex_times, ex_goals, ex_offsets),
+                (ex_observations, ex_actions, ex_times, ex_goals, 
+                 jnp.zeros((ex_offsets.shape[0],step_dim), dtype=jnp.uint8)
+                 ),
             ),
             unc_embed=(unc_embed_def, ()),
+            unc_step_embed=(unc_step_embed_def, (ex_offsets)),
         )
         if encoders.get('actor_flow') is not None:
             # Add actor_flow_encoder to ModuleDict to make it separately callable.
