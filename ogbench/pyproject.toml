@@ -5,7 +5,7 @@ requires-python = ">= 3.11"
 dependencies = [
     "distrax>=0.1.5",
     "flax>=0.8.4",
-    "jax[cuda12,cuda12-pip]>=0.4.35",
+    "jax[cuda12]>=0.4.35",
     "jaxlib>=0.4.34",
     "matplotlib>=3.9.4",
     "ml-collections>=0.1.1",
@@ -14,7 +14,7 @@ dependencies = [
     "pyopengl-accelerate>=3.1.9",
     "rich>=14.0.0",
     "tqdm>=4.67.1",
-    "wandb>=0.20.0",
+    "wandb>=0.20.1",
 ]
 
 [project.optional-dependencies]
