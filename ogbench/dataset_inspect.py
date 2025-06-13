@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 import wandb
 from absl import app, flags
 from ml_collections import config_flags
@@ -31,18 +32,28 @@ def main(_):
     print('Example spec:', spec)
 
     num_eps = min(len(dataset.initial_locs), FLAGS.num_videos)
+    print(dataset.initial_locs[:num_eps])
+    print(dataset.terminal_locs[:num_eps])
     renders = []
-    for start, end in zip(dataset.initial_locs[:num_eps], dataset.terminal_locs[:num_eps]):
+    idxs = zip(dataset.initial_locs[:num_eps], dataset.terminal_locs[:num_eps])
+    for start, end in tqdm(idxs, total=FLAGS.num_videos):
         frames = dataset.dataset['observations'][start:end]
-        renders.append(frames)
+        if len(frames):
+            renders.append(frames)
     if renders:
-        video = get_wandb_video(renders, n_cols=int(np.ceil(np.sqrt(len(renders)))))
+        video = get_wandb_video(renders)
         wandb.log({'dataset/videos': video})
 
-    for k, arr in dataset.dataset.items():
+    for k, arr in tqdm(dataset.dataset.items()):
         if arr.ndim == 4 and arr.shape[-1] == 3:
+            print(f'Skipping {k} with shape {arr.shape}')
             continue
-        wandb.log({f'dataset/{k}_hist': wandb.Histogram(arr.flatten())})
+
+        if arr.ndim > 1:
+            for i in tqdm(range(arr.shape[-1]), leave=False):
+                wandb.log({f'dataset/{k}_{i}': wandb.Histogram(arr[...,i])})
+        else:
+            wandb.log({f'dataset/{k}': wandb.Histogram(arr.flatten())})
 
 
 if __name__ == '__main__':

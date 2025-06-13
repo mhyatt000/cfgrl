@@ -10,6 +10,7 @@ dependencies = [
     "ml-collections>=0.1.1",
     "moviepy>=2.2.1",
     "ogbench>=1.1.3",
+    "pyopengl-accelerate>=3.1.9",
     "wandb>=0.20.1",
 ]
 
