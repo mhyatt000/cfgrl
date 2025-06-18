@@ -65,6 +65,7 @@ def evaluate(
     trajs = []
     stats = defaultdict(list)
 
+    nstep = np.random.randint(0, 1000, size=len(observation)) if config is not None else 0
     renders = []
     for i in trange(num_eval_episodes + num_video_episodes):
         traj = defaultdict(list)
@@ -77,7 +78,12 @@ def evaluate(
         step = 0
         render = []
         while not done:
-            action = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
+            action = actor_fn(
+                observations=observation,
+                goals=goal,
+                goal_steps=nstep,
+                temperature=eval_temperature,
+            )
             action = np.array(action)
             if eval_gaussian is not None:
                 action = np.random.normal(action, eval_gaussian)
