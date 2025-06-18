@@ -193,13 +193,13 @@ class GCDataset:
 
         # Assert probabilities sum to 1.
         assert np.isclose(
-            self.config['value_p_curgoal'] + self.config['value_p_trajgoal'] + self.config['value_p_randomgoal'], 1.0
+            self.config.value_p_curgoal + self.config.value_p_trajgoal + self.config.value_p_randomgoal, 1.0
         )
         assert np.isclose(
-            self.config['actor_p_curgoal'] + self.config['actor_p_trajgoal'] + self.config['actor_p_randomgoal'], 1.0
+            self.config.actor_p_curgoal + self.config.actor_p_trajgoal + self.config.actor_p_randomgoal, 1.0
         )
 
-        if self.config['frame_stack'] is not None:
+        if self.config.frame_stack is not None:
             # Only support compact (observation-only) datasets.
             assert 'next_observations' not in self.dataset
             if self.preprocess_frame_stack:
@@ -222,23 +222,23 @@ class GCDataset:
             idxs = self.dataset.get_random_idxs(batch_size)
 
         batch = self.dataset.sample(batch_size, idxs)
-        if self.config['frame_stack'] is not None:
+        if self.config.frame_stack is not None:
             batch['observations'] = self.get_observations(idxs)
             batch['next_observations'] = self.get_observations(idxs + 1)
 
         value_goal_idxs = self.sample_goals(
             idxs,
-            self.config['value_p_curgoal'],
-            self.config['value_p_trajgoal'],
-            self.config['value_p_randomgoal'],
-            self.config['value_geom_sample'],
+            self.config.value_p_curgoal,
+            self.config.value_p_trajgoal,
+            self.config.value_p_randomgoal,
+            self.config.value_geom_sample,
         )
         actor_goal_idxs = self.sample_goals(
             idxs,
-            self.config['actor_p_curgoal'],
-            self.config['actor_p_trajgoal'],
-            self.config['actor_p_randomgoal'],
-            self.config['actor_geom_sample'],
+            self.config.actor_p_curgoal,
+            self.config.actor_p_trajgoal,
+            self.config.actor_p_randomgoal,
+            self.config.actor_geom_sample,
         )
 
         actor_offsets = jnp.array(actor_goal_idxs - idxs, dtype=jnp.uint8)
@@ -252,13 +252,13 @@ class GCDataset:
         batch['actor_offsets'] = actor_offsets[:, None]
         successes = (idxs == value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes
-        batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
+        batch['rewards'] = successes - (1.0 if self.config.gc_negative else 0.0)
         actor_successes = (idxs == actor_goal_idxs).astype(float)
         batch['actor_masks'] = 1.0 - actor_successes
-        batch['actor_rewards'] = actor_successes - (1.0 if self.config['gc_negative'] else 0.0)
+        batch['actor_rewards'] = actor_successes - (1.0 if self.config.gc_negative else 0.0)
 
-        if self.config['p_aug'] is not None and not evaluation:
-            if np.random.rand() < self.config['p_aug']:
+        if self.config.p_aug is not None and not evaluation:
+            if np.random.rand() < self.config.p_aug:
                 self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
 
         return batch
@@ -267,7 +267,7 @@ class GCDataset:
         """Sample goals for the given indices."""
         batch_size = len(idxs)
         if discount is None:
-            discount = self.config['discount']
+            discount = self.config.discount
 
         # Random goals.
         random_goal_idxs = self.dataset.get_random_idxs(batch_size)
@@ -310,7 +310,7 @@ class GCDataset:
 
     def get_observations(self, idxs):
         """Return the observations for the given indices."""
-        if self.config['frame_stack'] is None or self.preprocess_frame_stack:
+        if self.config.frame_stack is None or self.preprocess_frame_stack:
             return jax.tree_util.tree_map(lambda arr: arr[idxs], self.dataset['observations'])
         else:
             return self.get_stacked_observations(idxs)
@@ -319,7 +319,7 @@ class GCDataset:
         """Return the frame-stacked observations for the given indices."""
         initial_state_idxs = self.initial_locs[np.searchsorted(self.initial_locs, idxs, side='right') - 1]
         rets = []
-        for i in reversed(range(self.config['frame_stack'])):
+        for i in reversed(range(self.config.frame_stack)):
             cur_idxs = np.maximum(idxs - i, initial_state_idxs)
             rets.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self.dataset['observations']))
         return jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *rets)
@@ -362,7 +362,7 @@ class HGCDataset(GCDataset):
             idxs = self.dataset.get_random_idxs(batch_size)
 
         batch = self.dataset.sample(batch_size, idxs)
-        if self.config['frame_stack'] is not None:
+        if self.config.frame_stack is not None:
             batch['observations'] = self.get_observations(idxs)
             batch['next_observations'] = self.get_observations(idxs + 1)
 
@@ -371,15 +371,15 @@ class HGCDataset(GCDataset):
         # Sample high-level value goals.
         high_value_goal_idxs = self.sample_goals(
             idxs,
-            self.config['value_p_curgoal'],
-            self.config['value_p_trajgoal'],
-            self.config['value_p_randomgoal'],
-            self.config['value_geom_sample'],
+            self.config.value_p_curgoal,
+            self.config.value_p_trajgoal,
+            self.config.value_p_randomgoal,
+            self.config.value_geom_sample,
         )
         value_subgoal_steps = (
-            self.config['subgoal_steps']
-            if self.config.get('value_subgoal_steps') is None
-            else self.config['value_subgoal_steps']
+            self.config.subgoal_steps
+            if self.config.value_subgoal_steps is None
+            else self.config.value_subgoal_steps
         )
         high_value_next_idxs, high_value_subgoal_steps = self.compute_high_next_idxs(
             idxs,
@@ -403,22 +403,22 @@ class HGCDataset(GCDataset):
         high_value_successes = (high_value_subgoal_steps < value_subgoal_steps).astype(float)
         batch['high_value_subgoal_steps'] = high_value_subgoal_steps
         batch['high_value_masks'] = 1.0 - high_value_successes
-        if self.config['gc_negative']:
-            batch['high_value_rewards'] = -(1 - self.config['discount'] ** high_value_subgoal_steps) / (
-                1 - self.config['discount']
+        if self.config.gc_negative:
+            batch['high_value_rewards'] = -(1 - self.config.discount ** high_value_subgoal_steps) / (
+                1 - self.config.discount
             )
         else:
-            batch['high_value_rewards'] = (self.config['discount'] ** high_value_subgoal_steps) * high_value_successes
+            batch['high_value_rewards'] = (self.config.discount ** high_value_subgoal_steps) * high_value_successes
 
         # Sample low-level value goals (if requested).
-        if 'low_discount' in self.config:
+        if 'low_discount' in asdict(self.config):
             low_value_goal_idxs = self.sample_goals(
                 idxs,
-                self.config['value_p_curgoal'],
-                self.config['value_p_trajgoal'],
-                self.config['value_p_randomgoal'],
+                self.config.value_p_curgoal,
+                self.config.value_p_trajgoal,
+                self.config.value_p_randomgoal,
                 geom_sample=True,
-                discount=self.config['low_discount'],
+                discount=self.config.low_discount,
             )
 
             if 'oracle_reps' in self.dataset:
@@ -427,25 +427,25 @@ class HGCDataset(GCDataset):
                 batch['low_value_goals'] = self.get_observations(low_value_goal_idxs)
             successes = (idxs == low_value_goal_idxs).astype(float)
             batch['low_value_masks'] = 1.0 - successes
-            batch['low_value_rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
+            batch['low_value_rewards'] = successes - (1.0 if self.config.gc_negative else 0.0)
 
         # One-step information.
         successes = (idxs == high_value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes
-        batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
+        batch['rewards'] = successes - (1.0 if self.config.gc_negative else 0.0)
 
         # Sample high-level actor goals.
         high_actor_goal_idxs = self.sample_goals(
             idxs,
-            self.config['actor_p_curgoal'],
-            self.config['actor_p_trajgoal'],
-            self.config['actor_p_randomgoal'],
-            self.config['actor_geom_sample'],
+            self.config.actor_p_curgoal,
+            self.config.actor_p_trajgoal,
+            self.config.actor_p_randomgoal,
+            self.config.actor_geom_sample,
         )
         actor_subgoal_steps = (
-            self.config['subgoal_steps']
-            if self.config.get('actor_subgoal_steps') is None
-            else self.config['actor_subgoal_steps']
+            self.config.subgoal_steps
+            if self.config.actor_subgoal_steps is None
+            else self.config.actor_subgoal_steps
         )
         high_actor_next_idxs, high_actor_subgoal_steps = self.compute_high_next_idxs(
             idxs,
@@ -468,8 +468,8 @@ class HGCDataset(GCDataset):
 
         batch['low_actor_goals'] = self.get_high_actions(low_actor_goal_idxs, idxs)
 
-        if self.config['p_aug'] is not None and not evaluation:
-            if np.random.rand() < self.config['p_aug']:
+        if self.config.p_aug is not None and not evaluation:
+            if np.random.rand() < self.config.p_aug:
                 raise NotImplementedError
 
         return batch
