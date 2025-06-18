@@ -1,12 +1,12 @@
+from datetime import datetime
 import os
 import tempfile
-from datetime import datetime
 
 import absl.flags as flags
 import ml_collections
 import numpy as np
-import wandb
 from PIL import Image, ImageEnhance
+import wandb
 
 
 class CsvLogger:
@@ -60,6 +60,7 @@ def get_flag_dict():
 
 
 def setup_wandb(
+    config,
     entity=None,
     project='project',
     group=None,
@@ -71,7 +72,7 @@ def setup_wandb(
     tags = [group] if group is not None else None
 
     init_kwargs = dict(
-        config=get_flag_dict(),
+        config=config,
         project=project,
         entity=entity,
         tags=tags,

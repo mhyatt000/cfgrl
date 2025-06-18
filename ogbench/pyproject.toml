@@ -1,11 +1,27 @@
 [project]
 name = "cfgrl"
 version = "0.0.0"
-requires-python = ">= 3.9"
+requires-python = ">= 3.11"
+dependencies = [
+    "distrax>=0.1.5",
+    "flax>=0.8.4",
+    "jax[cuda12]==0.4.26",
+    "jaxlib==0.4.26",
+    "matplotlib>=3.9.4",
+    "ml-collections>=0.1.1",
+    "moviepy>=2.2.1",
+    "ogbench>=1.1.3",
+    "pyopengl-accelerate>=3.1.9",
+    "rich>=14.0.0",
+    "tqdm>=4.67.1",
+    "tyro>=0.9.24",
+    "wandb>=0.20.1",
+]
 
 [project.optional-dependencies]
 dev = [
     "ruff",
+    "pre-commit>=4.2.0",
 ]
 
 [tool.ruff]
@@ -14,3 +30,23 @@ line-length = 120
 
 [tool.ruff.format]
 quote-style = "single"
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle
+  "F",  # pyflakes
+  "I",  # isort
+]
+ignore = [
+  "F841",  # assigned but unused variable
+  "F821",  # undefined name
+  "E731",  # do not assign lambda
+  "E722",  # do not use bare except
+  "E402",  # module import not at top of file
+  "E501",  # line too long
+]
+
+
+[tool.ruff.lint.isort]
+# force-single-line = true
+force-sort-within-sections = true
