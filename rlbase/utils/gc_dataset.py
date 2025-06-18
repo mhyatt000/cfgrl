@@ -1,10 +1,7 @@
-from flax.core.frozen_dict import FrozenDict
-from flax.core import freeze
 import dataclasses
 import numpy as np
 import jax
 import ml_collections
-import copy
 
 from utils.dataset import Dataset
 
@@ -70,28 +67,44 @@ class GCDataset:
 
         return goal_indx
 
-    def sample(self, batch_size: int, indx=None):
-        if indx is None:
-            indx = np.random.randint(self.dataset.size-1, size=batch_size)
-        
-        batch = self.dataset.sample(batch_size, indx)
+    def _sample_once(self, indx):
+        batch = self.dataset.sample(len(indx), indx)
         goal_indx = self.sample_goals(indx)
 
-        success = (indx == goal_indx)
+        success = indx == goal_indx
         batch['rewards'] = success.astype(float) * self.reward_scale + self.reward_shift
         batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
 
-        # Different policy goals than value goals. Uniformly sample a point in the trajectory.
         final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
-        distance = np.random.rand(batch_size)
+        distance = np.random.rand(len(indx))
         policy_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
         batch['policy_goals'] = jax.tree_map(lambda arr: arr[policy_traj_goal_indx], self.dataset['observations'])
 
         if self.mask_terminal:
             batch['masks'] = 1.0 - success.astype(float)
         else:
-            batch['masks'] = np.ones(batch_size)
+            batch['masks'] = np.ones(len(indx))
 
+        return batch
+
+    def sample(self, batch_size: int, indx=None, horizon: int = 1):
+        if indx is None:
+            indx = np.random.randint(self.dataset.size, size=batch_size)
+
+        final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
+
+        if horizon == 1:
+            batch = self._sample_once(indx)
+            batch['is_pad'] = np.zeros(batch_size, dtype=bool)
+            return batch
+
+        steps = indx[:, None] + np.arange(horizon)
+        is_pad = steps > final_state_indx[:, None]
+        steps = np.minimum(steps, final_state_indx[:, None])
+
+        batch = self._sample_once(steps.reshape(-1))
+        batch = jax.tree_map(lambda arr: arr.reshape(batch_size, horizon, *arr.shape[1:]), batch)
+        batch['is_pad'] = is_pad
         return batch
 
     def train_valid_split(self, ratio):

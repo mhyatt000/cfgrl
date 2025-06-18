@@ -2,10 +2,10 @@ import dataclasses
 from functools import partial
 from typing import Any
 
+from flax.core.frozen_dict import FrozenDict
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax.core.frozen_dict import FrozenDict
 
 
 def get_size(data):
@@ -206,22 +206,8 @@ class GCDataset:
                 stacked_observations = self.get_stacked_observations(np.arange(self.size))
                 self.dataset = Dataset(self.dataset.copy(dict(observations=stacked_observations)))
 
-    def sample(self, batch_size: int, idxs=None, evaluation=False):
-        """Sample a batch of transitions with goals.
-
-        This method samples a batch of transitions with goals (value_goals and actor_goals) from the dataset. They are
-        stored in the keys 'value_goals' and 'actor_goals', respectively. It also computes the 'rewards' and 'masks'
-        based on the indices of the goals.
-
-        Args:
-            batch_size: Batch size.
-            idxs: Indices of the transitions to sample. If None, random indices are sampled.
-            evaluation: Whether to sample for evaluation. If True, image augmentation is not applied.
-        """
-        if idxs is None:
-            idxs = self.dataset.get_random_idxs(batch_size)
-
-        batch = self.dataset.sample(batch_size, idxs)
+    def _sample_once(self, idxs, evaluation=False):
+        batch = self.dataset.sample(len(idxs), idxs)
         if self.config['frame_stack'] is not None:
             batch['observations'] = self.get_observations(idxs)
             batch['next_observations'] = self.get_observations(idxs + 1)
@@ -261,6 +247,27 @@ class GCDataset:
             if np.random.rand() < self.config['p_aug']:
                 self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
 
+        return batch
+
+    def sample(self, batch_size: int, idxs=None, evaluation=False, horizon: int = 1):
+        """Sample a batch of transitions with goals."""
+        if idxs is None:
+            idxs = self.dataset.get_random_idxs(batch_size)
+
+        final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, idxs)]
+
+        if horizon == 1:
+            batch = self._sample_once(idxs, evaluation)
+            batch['is_pad'] = np.zeros(batch_size, dtype=bool)
+            return batch
+
+        steps = idxs[:, None] + np.arange(horizon)
+        is_pad = steps > final_state_idxs[:, None]
+        steps = np.minimum(steps, final_state_idxs[:, None])
+
+        batch = self._sample_once(steps.reshape(-1), evaluation)
+        batch = jax.tree_map(lambda arr: arr.reshape(batch_size, horizon, *arr.shape[1:]), batch)
+        batch['is_pad'] = is_pad
         return batch
 
     def sample_goals(self, idxs, p_curgoal, p_trajgoal, p_randomgoal, geom_sample, discount=None):
