@@ -1,5 +1,5 @@
+from dataclasses import dataclass
 from typing import Any
-from rich.pretty import pprint
 
 import flax
 import jax
@@ -36,18 +36,13 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         goals = jnp.where(do_gcfg[:, None], unc_embed, batch['actor_goals'])
 
         unc_step_embed = self.network.select('unc_step_embed')(params=grad_params)  # (1, 4)
-        step_embed = self.network.select('unc_step_embed')(batch['actor_offsets'], params=grad_params)  
+        step_embed = self.network.select('unc_step_embed')(batch['actor_offsets'], params=grad_params)
         do_scfg = jax.random.bernoulli(scfg_rng, p=0.5, shape=(batch_size,))
         mask = jnp.logical_and(do_scfg, do_gcfg)
-        steps = jnp.where(mask[:,None], unc_step_embed, step_embed[:,0])
+        steps = jnp.where(mask[:, None], unc_step_embed, step_embed[:, 0])
 
         pred = self.network.select('actor_flow')(
-                batch['observations'], 
-                x_t, 
-                t, 
-                goals=goals, 
-                goal_steps=steps, 
-                params=grad_params
+            batch['observations'], x_t, t, goals=goals, goal_steps=steps, params=grad_params
         )
         actor_loss = jnp.mean((pred - vel) ** 2)
 
@@ -122,20 +117,16 @@ class CFGRLAgent(flax.struct.PyTreeNode):
                 is_encoded=True,
             )
 
-            steps = self.network.select('unc_step_embed')( goal_steps)[0] if goal_steps is not None else unc_step_embed
+            steps = self.network.select('unc_step_embed')(goal_steps)[0] if goal_steps is not None else unc_step_embed
             gt_vels = self.network.select('actor_flow')(
                 observations,
                 actions,
                 t,
                 goals=goals,
-                goal_steps= steps,
+                goal_steps=steps,
                 is_encoded=True,
             )
-            vels = (
-                unc_vels
-                + self.config['cfg'] * (g_vels - unc_vels)
-                + self.config.get('cfg2', 1.0) * (gt_vels - g_vels)
-            )
+            vels = unc_vels + self.config['cfg'] * (g_vels - unc_vels) + self.config['cfg2'] * (gt_vels - g_vels)
 
             actions = actions + vels / self.config['flow_steps']
 
@@ -185,15 +176,19 @@ class CFGRLAgent(flax.struct.PyTreeNode):
             goal_dim=ex_goals.shape[-1],
         )
 
-        step_dim=4
-        unc_step_embed_def = UnconditionalEmbedding( num_embeddings=1000, goal_dim=step_dim)
+        step_dim = 4
+        unc_step_embed_def = UnconditionalEmbedding(num_embeddings=1000, goal_dim=step_dim)
 
         network_info = dict(
             actor_flow=(
                 actor_flow_def,
-                (ex_observations, ex_actions, ex_times, ex_goals, 
-                 jnp.zeros((ex_offsets.shape[0],step_dim), dtype=jnp.uint8)
-                 ),
+                (
+                    ex_observations,
+                    ex_actions,
+                    ex_times,
+                    ex_goals,
+                    jnp.zeros((ex_offsets.shape[0], step_dim), dtype=jnp.uint8),
+                ),
             ),
             unc_embed=(unc_embed_def, ()),
             unc_step_embed=(unc_step_embed_def, (ex_offsets)),
@@ -224,8 +219,8 @@ def get_config():
             actor_layer_norm=False,  # Whether to use layer normalization for the actor.
             discount=0.99,  # Discount factor.
             flow_steps=16,  # Number of flow steps.
-            cfg=3.0,  # CFG coefficient.
-            cfg2=3.0,  # CFG coefficient for time conditioning.
+            cfg=4.0,  # CFG coefficient.
+            cfg2=4.0,  # CFG coefficient for time conditioning.
             encoder=ml_collections.config_dict.placeholder(str),  # Visual encoder name (None, 'impala_small', etc.).
             action_dim=ml_collections.config_dict.placeholder(int),  # Action dimension (will be set automatically).
             # Dataset hyperparameters.
@@ -244,3 +239,37 @@ def get_config():
         )
     )
     return config
+
+
+@dataclass
+class CFGRLConfig:
+    """Configuration for the CFGRL agent."""
+
+    ### Agent hyperparameters
+    agent_name: str = 'cfgrl'
+    lr: float = 3e-4
+    batch_size: int = 1024
+    actor_hidden_dims: tuple = (512, 512, 512, 512)
+    actor_layer_norm: bool = False
+    discount: float = 0.99
+    flow_steps: int = 16
+    cfg: float = 3.0
+    cfg2: float = 3.0
+    encoder: str | None = None  # Visual encoder name (None, 'impala_small', etc.).
+    action_dim: int | None = None  # Action dimension (will be set automatically).
+    dataset_class: str = 'GCDataset'
+    value_p_curgoal: float = 0.0
+
+    ### Dataset hyperparameters
+    value_p_curgoal: float = 0.0  # Unused (defined for compatibility with GCDataset).
+    value_p_trajgoal: float = 1.0  # Unused (defined for compatibility with GCDataset).
+    value_p_randomgoal: float = 0.0  # Unused (defined for compatibility with GCDataset).
+    value_geom_sample: bool = False  # Unused (defined for compatibility with GCDataset).
+    actor_p_curgoal: float = 0.0  # prob goal=state_cur
+    actor_p_trajgoal: float = 1.0  # prob goal=state_future
+    actor_p_randomgoal: float = 0.0  # prob goal=state_random
+    actor_geom_sample: bool = False  # Whether to use geometric sampling for future actor goals.
+    gc_negative: bool = True  # Unused (defined for compatibility with GCDataset).
+    gc_negative: bool = True
+    p_aug: float = 0.0
+    frame_stack: int | None = None  # Number of frames to stack.
