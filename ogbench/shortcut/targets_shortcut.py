@@ -1,3 +1,5 @@
+"""borrowed from shorcut-models"""
+
 from dataclasses import dataclass
 
 import jax
