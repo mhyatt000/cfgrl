@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import flax
@@ -7,8 +7,10 @@ import jax.numpy as jnp
 import ml_collections
 import optax
 
+from shortcut.targets_shortcut import PolicyShortCutSampler, ShortCutSampler
 from utils.encoders import encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
+from utils.mytypes import Batched
 from utils.networks import GCActorVectorField, UnconditionalEmbedding
 
 
@@ -42,7 +44,12 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         steps = jnp.where(mask[:, None], unc_step_embed, step_embed[:, 0])
 
         pred = self.network.select('actor_flow')(
-            batch['observations'], x_t, t, goals=goals, goal_steps=steps, params=grad_params
+            batch['observations'],
+            x_t,
+            t,
+            goals=goals,
+            goal_steps=steps,
+            params=grad_params,
         )
         actor_loss = jnp.mean((pred - vel) ** 2)
 
@@ -50,19 +57,66 @@ class CFGRLAgent(flax.struct.PyTreeNode):
             'actor_loss': actor_loss,
         }
 
+    def loss_fn(self, obs, x_t, t, v_t, g, gdt, grad_params):
+        pred = self.network.select('actor_flow')(
+            obs,
+            x_t,
+            t,
+            goals=g,
+            goal_steps=gdt,
+            params=grad_params,
+        )
+        mse_v: Batched = jnp.mean((pred - v_t) ** 2, axis=(1, 2, 3))
+        loss = jnp.mean(mse_v)
+
+        info = {
+            'actor_loss': loss,
+        }
+        return loss, info
+
     @jax.jit
     def total_loss(self, batch, grad_params, rng=None):
         """Compute the total loss."""
         info = {}
         rng = rng if rng is not None else self.rng
 
-        rng, actor_rng = jax.random.split(rng)
+        rng, actor_rng, targets_rng = jax.random.split(rng, 3)
+        # x_t, v_t, t, dt_base, labels, info = get_targets(
+        # self.config.shortcut, targets_rng, train_state, images, labels,
+        # )
+        # actor_loss, actor_info = self.loss_fn(
+        # batch,
+        # grad_params, actor_rng)
         actor_loss, actor_info = self.actor_loss(batch, grad_params, actor_rng)
         for k, v in actor_info.items():
             info[f'actor/{k}'] = v
 
         loss = actor_loss
         return loss, info
+
+    @jax.jit
+    def shortcut_loss(self, batch, info, grad_params):
+        pred = self.network.select('actor_flow')(
+            batch['obs'],
+            batch['x_t'],
+            batch['t'],
+            goals=batch['goals'],
+            goal_steps=batch['dt'],
+            params=grad_params,
+        )
+        actor_loss = jnp.mean((pred - batch['v_t']) ** 2, where=(~batch['is_pad'][:, None]).astype(bool))
+        return actor_loss, (info | {'actor_loss': actor_loss})
+
+    def update_shortcut(self, ds):
+        new_rng, rng, shortcut_rng = jax.random.split(self.rng, 3)
+
+        batch, info = self.config.shortcut.policy_shortcut(shortcut_rng, self.network, ds)
+
+        def loss_fn(grad_params):
+            return self.shortcut_loss(batch, info, grad_params)
+
+        new_network, info = self.network.apply_loss_fn(loss_fn=loss_fn)
+        return self.replace(network=new_network, rng=new_rng), info
 
     @jax.jit
     def update(self, batch):
@@ -86,19 +140,19 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         temperature=1.0,
     ):
         """Sample actions from the actor."""
-        if self.config['encoder'] is not None:
+        if self.config.encoder is not None:
             observations = self.network.select('actor_flow_encoder')(observations)
 
         action_seed, noise_seed = jax.random.split(seed)
         actions = jax.random.normal(
             action_seed,
-            (*observations.shape[:-1], self.config['action_dim']),
+            (*observations.shape[:-1], self.config.action_dim),
         )
 
         unc_embed = self.network.select('unc_embed')()[0]
         unc_step_embed = self.network.select('unc_step_embed')()[0]
-        for i in range(self.config['flow_steps']):
-            t = jnp.full((*observations.shape[:-1], 1), i / self.config['flow_steps'])
+        for i in range(self.config.flow_steps):
+            t = jnp.full((*observations.shape[:-1], 1), i / self.config.flow_steps)
 
             unc_vels = self.network.select('actor_flow')(
                 observations,
@@ -126,9 +180,9 @@ class CFGRLAgent(flax.struct.PyTreeNode):
                 goal_steps=steps,
                 is_encoded=True,
             )
-            vels = unc_vels + self.config['cfg'] * (g_vels - unc_vels) + self.config['cfg2'] * (gt_vels - g_vels)
+            vels = unc_vels + self.config.cfg * (g_vels - unc_vels) + self.config.cfg2 * (gt_vels - g_vels)
 
-            actions = actions + vels / self.config['flow_steps']
+            actions = actions + vels / self.config.flow_steps
 
         actions = jnp.clip(actions, -1, 1)
 
@@ -160,15 +214,15 @@ class CFGRLAgent(flax.struct.PyTreeNode):
 
         # Define encoders.
         encoders = dict()
-        if config['encoder'] is not None:
-            encoder_module = encoder_modules[config['encoder']]
+        if config.encoder is not None:
+            encoder_module = encoder_modules[config.encoder]
             encoders['actor_flow'] = encoder_module()
 
         # Define networks.
         actor_flow_def = GCActorVectorField(
-            hidden_dims=config['actor_hidden_dims'],
+            hidden_dims=config.actor_hidden_dims,
             action_dim=action_dim,
-            layer_norm=config['actor_layer_norm'],
+            layer_norm=config.actor_layer_norm,
             encoder=encoders.get('actor_flow'),
         )
 
@@ -176,7 +230,7 @@ class CFGRLAgent(flax.struct.PyTreeNode):
             goal_dim=ex_goals.shape[-1],
         )
 
-        step_dim = 4
+        step_dim = 1
         unc_step_embed_def = UnconditionalEmbedding(num_embeddings=1000, goal_dim=step_dim)
 
         network_info = dict(
@@ -195,17 +249,20 @@ class CFGRLAgent(flax.struct.PyTreeNode):
         )
         if encoders.get('actor_flow') is not None:
             # Add actor_flow_encoder to ModuleDict to make it separately callable.
-            network_info['actor_flow_encoder'] = (encoders.get('actor_flow'), (ex_observations,))
+            network_info['actor_flow_encoder'] = (
+                encoders.get('actor_flow'),
+                (ex_observations,),
+            )
         networks = {k: v[0] for k, v in network_info.items()}
         network_args = {k: v[1] for k, v in network_info.items()}
 
         network_def = ModuleDict(networks)
-        network_tx = optax.adam(learning_rate=config['lr'])
+        network_tx = optax.adam(learning_rate=config.lr)
         network_params = network_def.init(init_rng, **network_args)['params']
         network = TrainState.create(network_def, network_params, tx=network_tx)
 
-        config['action_dim'] = action_dim
-        return cls(rng, network=network, config=flax.core.FrozenDict(**config))
+        config.action_dim = action_dim
+        return cls(rng, network=network, config=config)
 
 
 def get_config():
@@ -273,3 +330,8 @@ class CFGRLConfig:
     gc_negative: bool = True
     p_aug: float = 0.0
     frame_stack: int | None = None  # Number of frames to stack.
+
+    shortcut: ShortCutSampler | None = field(default_factory=PolicyShortCutSampler)
+
+    def __post_init__(self):
+        self.shortcut._batch_size = self.batch_size

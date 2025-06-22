@@ -34,6 +34,27 @@ def add_to(dict_of_lists, single_dict):
         dict_of_lists[k].append(v)
 
 
+class PSGPolicy:
+    """policy shortcut guided policy"""
+
+    def __init__(self, agent, rng, max_dt=1):
+        self.agent = agent
+        self.rng = rng
+        self._t = 0  # time until resample
+        self.scale = self.agent.config.shortcut.denoise_timesteps
+        self.max_dt = max_dt
+
+    def sample_actions(self, *args, **kwargs):
+        if self._t == 0:
+            act_rng, dt_rng, self.rng = jax.random.split(self.rng, 3)
+            self.dt = jax.random.randint(dt_rng, (1,), self.max_dt, 8)
+            self._t += self.scale / (2**self.dt)
+            self.action = self.agent.sample_actions(*args, **kwargs, goal_steps=self.dt, seed=act_rng)
+
+        self._t -= 1
+        return self.action
+
+
 def evaluate(
     agent,
     env,
@@ -61,27 +82,34 @@ def evaluate(
     Returns:
         A tuple containing the statistics, trajectories, and rendered videos.
     """
-    actor_fn = supply_rng(agent.sample_actions, rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+    rng = jax.random.PRNGKey(np.random.randint(0, 2**32))
+    act_rng, rng = jax.random.split(rng)
+    agent = PSGPolicy(agent, act_rng, max_dt=4)
+    # actor_fn = supply_rng(agent.sample_actions, rng=act_rng)
     trajs = []
     stats = defaultdict(list)
 
-    nstep = np.random.randint(0, 1000, size=len(observation)) if config is not None else 0
     renders = []
     for i in trange(num_eval_episodes + num_video_episodes):
         traj = defaultdict(list)
         should_render = i >= num_eval_episodes
 
         observation, info = env.reset(options=dict(task_id=task_id, render_goal=should_render))
+        # nstep = np.random.randint(0, 1000, size=len(observation)) if config is not None else 0
         goal = info.get('goal')
         goal_frame = info.get('goal_rendered')
         done = False
         step = 0
         render = []
         while not done:
-            action = actor_fn(
+            # dt_rng, rng = jax.random.split(rng)
+            # dt   = jax.random.randint(dt_rng, (), 1, 8)
+            # dt = agent.config.shortcut.generate_dt(rng=dt_rng, train=False)
+            # action = actor_fn(
+            action = agent.sample_actions(
                 observations=observation,
                 goals=goal,
-                goal_steps=nstep,
+                # goal_steps=dt,
                 temperature=eval_temperature,
             )
             action = np.array(action)

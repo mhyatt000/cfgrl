@@ -249,24 +249,29 @@ class GCDataset:
 
         return batch
 
-    def sample(self, batch_size: int, idxs=None, evaluation=False, horizon: int = 1):
+    def sample(self, batch_size: int, idxs=None, evaluation=False, horizon: int | list[int] = 1, sparse=False):
         """Sample a batch of transitions with goals."""
         if idxs is None:
             idxs = self.dataset.get_random_idxs(batch_size)
 
         final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, idxs)]
 
-        if horizon == 1:
+        if isinstance(horizon, int) and horizon == 1:
             batch = self._sample_once(idxs, evaluation)
             batch['is_pad'] = np.zeros(batch_size, dtype=bool)
             return batch
 
-        steps = idxs[:, None] + np.arange(horizon)
+        horizon -= 1
+        if not sparse:
+            steps = idxs[:, None] + np.arange(horizon)
+        else:
+            steps = np.stack([idxs, idxs + horizon], axis=-1).astype(int)
         is_pad = steps > final_state_idxs[:, None]
         steps = np.minimum(steps, final_state_idxs[:, None])
 
         batch = self._sample_once(steps.reshape(-1), evaluation)
-        batch = jax.tree_map(lambda arr: arr.reshape(batch_size, horizon, *arr.shape[1:]), batch)
+        seq = horizon if isinstance(horizon, int) else 2
+        batch = jax.tree_map(lambda arr: arr.reshape(batch_size, seq, *arr.shape[1:]), batch)
         batch['is_pad'] = is_pad
         return batch
 

@@ -7,6 +7,7 @@ dependencies = [
     "flax>=0.8.4",
     "jax[cuda12]==0.4.26",
     "jaxlib==0.4.26",
+    "jaxtyping>=0.3.2",
     "matplotlib>=3.9.4",
     "ml-collections>=0.1.1",
     "moviepy>=2.2.1",

@@ -4,6 +4,7 @@ import json
 import os
 import random
 import time
+from typing import Literal
 
 import jax
 import numpy as np
@@ -21,7 +22,7 @@ from utils.env_utils import make_gc_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
 from utils.log_utils import CsvLogger, get_exp_name, get_wandb_video, setup_wandb
-from utils.time_utils import spec
+from utils.mytypes import spec
 
 
 @dataclass
@@ -29,6 +30,7 @@ class Config:
     agent_name: str = 'cfgrl'  # Agent name.
 
     run_group: str = 'Debug'  # Run group for wandb.
+    mode: Literal['online', 'offline'] = 'online'  # Mode for wandb (online/offline).
     seed: int = 0  # Random seed
     env_name: str = 'antmaze-large-navigate-oraclerep-v0'  # Environment (dataset) name.
     save_dir: str = 'exp/'
@@ -54,7 +56,7 @@ class Config:
 def main(cfg: Config):
     # Set up logger.
     exp_name = get_exp_name(cfg.seed)
-    setup_wandb(asdict(cfg), project='cfgrl', group=cfg.run_group, name=exp_name)
+    setup_wandb(asdict(cfg), project='cfgrl', group=cfg.run_group, name=exp_name, mode=cfg.mode)
 
     cfg.save_dir = os.path.join(cfg.save_dir, wandb.run.project, cfg.run_group, exp_name)
     os.makedirs(cfg.save_dir, exist_ok=True)
@@ -69,7 +71,7 @@ def main(cfg: Config):
     dataset_class = {
         'GCDataset': GCDataset,
         'HGCDataset': HGCDataset,
-    }[config['dataset_class']]
+    }[config.dataset_class]
     train_dataset = dataset_class(Dataset.create(**train_dataset), config)
     if val_dataset is not None:
         val_dataset = dataset_class(Dataset.create(**val_dataset), config)
@@ -81,7 +83,7 @@ def main(cfg: Config):
     example_batch = train_dataset.sample(1)
     pprint(spec(example_batch))
 
-    agent_class = agents[config['agent_name']]
+    agent_class = agents[config.agent_name]
     agent = agent_class.create(
         cfg.seed,
         example_batch,
@@ -100,18 +102,17 @@ def main(cfg: Config):
     last_time = time.time()
     for i in tqdm.tqdm(range(1, cfg.train_steps + 1), smoothing=0.1, dynamic_ncols=True):
         # Update agent.
-        # batch = train_dataset.sample(config['batch_size'])
-        overfit = train_dataset.sample(
-            config['batch_size'], idxs=np.random.choice(range(1000), size=config['batch_size'])
-        )
-        batch = overfit
-        agent, update_info = agent.update(batch)
+        if cfg.agent.shortcut is not None:
+            agent, update_info = agent.update_shortcut(train_dataset)
+        else:
+            batch = train_dataset.sample(config.batch_size)
+            agent, update_info = agent.update(batch)
 
         # Log metrics.
         if i % cfg.log_interval == 0:
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
             if val_dataset is not None:
-                val_batch = val_dataset.sample(config['batch_size'])
+                val_batch = val_dataset.sample(config.batch_size)
                 _, val_info = agent.total_loss(val_batch, grad_params=None)
                 train_metrics.update({f'validation/{k}': v for k, v in val_info.items()})
             train_metrics['time/epoch_time'] = (time.time() - last_time) / cfg.log_interval
